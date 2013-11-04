@@ -10,6 +10,7 @@ struct _SCMExternalSource {
   MIDIEndpointRef source;
   CFMutableDataRef receivedMidi;
   MIDIPortRef port;
+  void *callback;
 };
 
 struct _SCMExternalDestination {
@@ -45,6 +46,8 @@ SCMExternalSourceDispose(SCMExternalSourceRef sourceRef) {
         MIDIPortDispose(sourceRef->port);
   CFRelease(sourceRef->receivedMidi);
   CFAllocatorDeallocate(NULL, sourceRef);
+  if (sourceRef->callback)
+      Py_DECREF(sourceRef->callback);
 }
 
 static void
@@ -56,13 +59,14 @@ SCMExternalDestinationDispose(SCMExternalSourceRef destRef) {
 
 
 static SCMExternalSourceRef
-SCMConnectExternalSource(MIDIEndpointRef ref) {
+SCMConnectExternalSource(MIDIEndpointRef ref, void *callback) {
     OSStatus result;
   SCMExternalSourceRef sourceRef
     = CFAllocatorAllocate(NULL, sizeof(struct _SCMExternalSource), 0);
   sourceRef->receivedMidi = CFDataCreateMutable(NULL, 0);
   sourceRef->source = ref;
   sourceRef->port = nil;
+  sourceRef->callback = callback;
 
   result = MIDIInputPortCreate(SCMGlobalMIDIClient(),
                       CFSTR("In"),
@@ -114,9 +118,23 @@ static PyObject *
 SCMGetSourcePyObject(PyObject* self, PyObject* args) {
   MIDIEndpointRef endpoint;
   SCMExternalSourceRef sourceRef;
+  PyObject *callback;
 
-  PyArg_ParseTuple(args, "i", &endpoint);
-  sourceRef = SCMConnectExternalSource(endpoint);
+  if (!PyArg_UnpackTuple(args, "iO", 2, 2, &endpoint, &callback))
+  {
+      printf("failed to parse\n");
+      PyErr_SetString(PyExc_TypeError, "failed to parse arguments");
+      return NULL;
+  }
+printf("aa ref %d, callback %x\n", endpoint, callback);
+
+  if (!PyCallable_Check(callback)) {
+      printf("not callable\n");
+      PyErr_SetString(PyExc_TypeError, "parameter must be callable");
+      return NULL;
+  }
+  Py_XINCREF(callback);         /* Add a reference to new callback */
+  sourceRef = SCMConnectExternalSource(endpoint, callback);
 
   return PyCObject_FromVoidPtr(sourceRef, SCMExternalSourceDispose);
 }
@@ -126,13 +144,17 @@ SCMGetDestinationPyObject(PyObject* self, PyObject* args) {
   SCMExternalSourceRef destRef;
   MIDIEndpointRef endpoint;
 
-  PyArg_ParseTuple(args, "i", &endpoint);
+  if (!PyArg_ParseTuple(args, "i", &endpoint))
+  {
+      PyErr_SetString(PyExc_TypeError, "failed to parse arguments");
+      return NULL;
+  }
 
   destRef = SCMConnectExternalDestination(endpoint);
   if (destRef == nil)
   {
-      Py_INCREF(Py_None);
-      return Py_None;
+      PyErr_SetString(PyExc_TypeError, "Failed to connect external destination");
+      return NULL;
   }
   return PyCObject_FromVoidPtr(destRef, SCMExternalDestinationDispose);
 }
@@ -214,27 +236,27 @@ SCMSendMidi(PyObject* self, PyObject* args) {
   pkt = MIDIPacketListAdd(pktList, 1024+100, pkt, now, nBytes, midiDataToSend);
 
   if (pkt == NULL)
-    printf("failed to create the midi packet.\n");
+      PyErr_SetString(PyExc_TypeError, "failed to create the midi packet");
 
   result = MIDISend(destRef->port, destRef->destination, pktList);
   if (noErr != result)
-      printf("failed to send the midi.\n");
+      PyErr_SetString(PyExc_TypeError, "failed to send the packet");
 
   Py_INCREF(Py_None);
   return Py_None;
 }
 
 
-static PyObject*
-SCMRecvMidi(PyObject* self, PyObject* args) {
+void
+SCMRecvMIDIPyCallback(SCMExternalSourceRef sourceRef) {
   PyObject* receivedMidiT;
   UInt8* bytePtr;
   int i;
   CFIndex numBytes;
-  SCMExternalSourceRef sourceRef
-    = (SCMExternalSourceRef) PyCObject_AsVoidPtr(PyTuple_GetItem(args, 0));
+  PyObject *arglist;
 
   numBytes = CFDataGetLength(sourceRef->receivedMidi);
+printf('glerb\n');
 
   receivedMidiT = PyTuple_New(numBytes);
   bytePtr = CFDataGetMutableBytePtr(sourceRef->receivedMidi);
@@ -243,9 +265,11 @@ SCMRecvMidi(PyObject* self, PyObject* args) {
     PyTuple_SetItem(receivedMidiT, i, midiByte);
   }
 
-  // fixme --lock or use message queue
+  arglist = Py_BuildValue("(o)", receivedMidiT);
+  PyObject_CallObject(sourceRef->callback, arglist);
+  Py_DECREF(arglist);
+  Py_DECREF(receivedMidiT);
   CFDataDeleteBytes(sourceRef->receivedMidi, CFRangeMake(0, numBytes));
-  return receivedMidiT;
 }
 
 
@@ -262,9 +286,11 @@ SCMRecvMIDIProc(const MIDIPacketList* pktList,
     CFDataAppendBytes(sourceRef->receivedMidi, pkt->data, pkt->length);
     pkt = MIDIPacketNext(pkt);
   }
+printf("blah\n");
+  SCMRecvMIDIPyCallback(sourceRef);
+
 }
 
-/* FIXME FIXME FIXME -- use receive callback instead of polling: http://stackoverflow.com/questions/6412828/python-wrapper-to-a-c-callback */
 
 
 static PyMethodDef SimpleCoreMidiMethods[] = {
@@ -274,7 +300,6 @@ static PyMethodDef SimpleCoreMidiMethods[] = {
   {"get_midi_destination", SCMGetDestinationPyObject, METH_VARARGS, "Get a MIDI destination object."},
   {"get_midi_destination_list", SCMGetDestinationListPyObject, METH_NOARGS, "Get the available MIDI destinations."},
   {"send_midi", SCMSendMidi, METH_VARARGS, "Send midi data tuple to an external destination."},
-  {"recv_midi", SCMRecvMidi, METH_VARARGS, "Receive midi data bytes from an external source."},
   {NULL, NULL, 0, NULL}
 };
 

@@ -28,15 +28,16 @@ for d in simplecoremidi.MIDIDestination.list():
 
         note += step
         sleep(0.2)
+
 """
+
+def printBytes(name, bytes):
+  print(name, bytes)
 
 sources = simplecoremidi.MIDISource.list()
 for s in sources:
   print(s.name)
+  s.receive(printBytes)
 
 while (True):
-  for s in sources:
-      ss = s.receive()
-      if ss:
-        print(ss)
-
+  pass
