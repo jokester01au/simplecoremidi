@@ -22,11 +22,11 @@ class MIDISource(object):
        raise Exception('Source %s unavailable' % self.name)
     return self.__source
 
-  def receive(self):
+  def receive(self, timeout=1):
     """
     this will block until data is available
     """
-    return cfuncs.receive_midi(self._source())
+    return cfuncs.receive_midi(self._source(), timeout)
 
 class MIDIDestination(object):
   def __init__(self, name, destination_ref):

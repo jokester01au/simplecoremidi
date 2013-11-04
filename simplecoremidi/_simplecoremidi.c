@@ -5,6 +5,22 @@
 #include <Python.h>
 #include <stdbool.h>
 #include <string.h>
+#include <time.h>
+
+
+//clock_gettime is not implemented on OSX
+#ifdef __MACH__
+#include <sys/time.h>
+#define CLOCK_REALTIME 0
+int clock_gettime(int clk_id, struct timespec* t) {
+    struct timeval now;
+    int rv = gettimeofday(&now, NULL);
+    if (rv) return rv;
+    t->tv_sec  = now.tv_sec;
+    t->tv_nsec = now.tv_usec * 1000;
+    return 0;
+}
+#endif
 
 struct _SCMExternalSource {
   MIDIEndpointRef source;
@@ -241,7 +257,6 @@ SCMSendMidi(PyObject* self, PyObject* args) {
   return Py_None;
 }
 
-
 static PyObject*
 SCMRecvMidi(PyObject* self, PyObject* args) {
   PyObject* receivedMidiT;
@@ -250,22 +265,36 @@ SCMRecvMidi(PyObject* self, PyObject* args) {
   CFIndex numBytes;
   SCMExternalSourceRef sourceRef
     = (SCMExternalSourceRef) PyCObject_AsVoidPtr(PyTuple_GetItem(args, 0));
+  int timeout_seconds = PyLong_AsLong(PyTuple_GetItem(args, 1));
+  struct timespec abstime;
+  int result;
+  clock_gettime(CLOCK_REALTIME, &abstime);
+  abstime.tv_sec += timeout_seconds;
 
   while (true) {
 
       numBytes = CFDataGetLength(sourceRef->receivedMidi);
       if (numBytes > 0) break;
-      pthread_cond_wait(&sourceRef->condition, &sourceRef->mutex);
+      result = pthread_cond_timedwait(&sourceRef->condition, &sourceRef->mutex, &abstime);
+      if (result == ETIMEDOUT) break;
   }
 
-  receivedMidiT = PyTuple_New(numBytes);
-  bytePtr = CFDataGetMutableBytePtr(sourceRef->receivedMidi);
-  for (i = 0; i < numBytes; i++, bytePtr++) {
-    PyObject* midiByte = PyInt_FromLong(*bytePtr);
-    PyTuple_SetItem(receivedMidiT, i, midiByte);
+  if (numBytes == 0)
+  {
+      Py_INCREF(Py_None);
+      receivedMidiT = Py_None;
+  }
+  else
+  {
+      receivedMidiT = PyTuple_New(numBytes);
+      bytePtr = CFDataGetMutableBytePtr(sourceRef->receivedMidi);
+      for (i = 0; i < numBytes; i++, bytePtr++) {
+        PyObject* midiByte = PyInt_FromLong(*bytePtr);
+        PyTuple_SetItem(receivedMidiT, i, midiByte);
+      }
+      CFDataDeleteBytes(sourceRef->receivedMidi, CFRangeMake(0, numBytes));
   }
 
-  CFDataDeleteBytes(sourceRef->receivedMidi, CFRangeMake(0, numBytes));
   pthread_mutex_unlock(&sourceRef->mutex);
   return receivedMidiT;
 }

@@ -41,5 +41,8 @@ for s in sources:
 
 while (True):
   for s in sources:
-    bytes = s.receive()
-    print ('s.name: %s' % str(bytes))
+    bytes = s.receive(5)
+    if bytes == None:
+      print ('%s timed out' % s.name)
+    else:
+      print (s.name, str(bytes))
