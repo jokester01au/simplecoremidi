@@ -1,1 +1,1 @@
-from .core import MIDISource, MIDIDestination
+from .core import *
