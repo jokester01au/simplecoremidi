@@ -1,5 +1,8 @@
 from . import _simplecoremidi as cfuncs
 
+def callback_ext(bytes=()):
+   print("caaled ex")
+
 class MIDISource(object):
   def __init__(self, name, source_ref):
     self.name = name
@@ -15,14 +18,15 @@ class MIDISource(object):
 
   def _source(self):
     if not self.__source:
-        self.__source = cfuncs.get_midi_source(self._source_ref, self._callback_int)
+        self.__source = cfuncs.get_midi_source(self._source_ref, callback_ext)
     if not self.__source:
        raise Exception('Source %s unavailable' % self.name)
     return self.__source
 
-  def _callback_int(self, bytes):
-    if __callback:
-      callback(bytes)
+  def _callback_int(self, bytes=()):
+    print ("called")
+    if self.__callback:
+      self.__callback(bytes)
 
   def receive(self,callback):
     self.__callback = callback

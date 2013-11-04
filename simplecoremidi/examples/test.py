@@ -31,8 +31,8 @@ for d in simplecoremidi.MIDIDestination.list():
 
 """
 
-def printBytes(name, bytes):
-  print(name, bytes)
+def printBytes(bytes):
+  print(bytes)
 
 sources = simplecoremidi.MIDISource.list()
 for s in sources:
@@ -40,4 +40,4 @@ for s in sources:
   s.receive(printBytes)
 
 while (True):
-  pass
+  sleep(1)
