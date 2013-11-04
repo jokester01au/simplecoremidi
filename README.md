@@ -38,3 +38,4 @@ A fork of the [simplecoremidi](https://pypi.python.org/pypi/simplecoremidi) pyth
 
   - Unbreak the original functionality that allowed you to create virtual endpoints
   - "hijack" ports to prevent messages from being propagated to other endpoints
+  - properly fork this repo from the original ([https://github.com/sixohsix/simplecoremidi])

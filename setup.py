@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages, Extension
 import sys, os
 
-version = '0.2.2'
+version = '0.3.0'
 
 if sys.platform != 'darwin':
     raise Exception(
@@ -34,9 +34,9 @@ setup(name='simplecoremidi',
         "License :: OSI Approved :: MIT License",
         ],
       keywords='osx, CoreMIDI, MIDI, Mac OS X',
-      author='Mike Verdone',
-      author_email='mike.verdone+simplecoremidi@gmail.com',
-      url='https://github.com/sixohsix/simplecoremidi',
+      author='Joseph Thomas-Kerr',
+      author_email='jokester01au@yahoo.com.au',
+      url='https://github.com/jokester01au/simplecoremidi',
       license='MIT License',
       packages=find_packages(exclude=['ez_setup', 'examples', 'tests']),
       include_package_data=True,
