@@ -8,7 +8,6 @@ class MIDISource(object):
     self.name = name
     self._source_ref = source_ref
     self.__source = None
-    self.__callback = None
 
   @classmethod
   def list(cls):
@@ -18,19 +17,16 @@ class MIDISource(object):
 
   def _source(self):
     if not self.__source:
-        self.__source = cfuncs.get_midi_source(self._source_ref, callback_ext)
+        self.__source = cfuncs.get_midi_source(self._source_ref)
     if not self.__source:
        raise Exception('Source %s unavailable' % self.name)
     return self.__source
 
-  def _callback_int(self, bytes=()):
-    print ("called")
-    if self.__callback:
-      self.__callback(bytes)
-
-  def receive(self,callback):
-    self.__callback = callback
-    self._source()
+  def receive(self):
+    """
+    this will block until data is available
+    """
+    return cfuncs.receive_midi(self._source())
 
 class MIDIDestination(object):
   def __init__(self, name, destination_ref):

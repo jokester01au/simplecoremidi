@@ -37,7 +37,9 @@ def printBytes(bytes):
 sources = simplecoremidi.MIDISource.list()
 for s in sources:
   print(s.name)
-  s.receive(printBytes)
+
 
 while (True):
-  sleep(1)
+  for s in sources:
+    bytes = s.receive()
+    print ('s.name: %s' % str(bytes))

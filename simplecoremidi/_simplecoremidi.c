@@ -10,7 +10,9 @@ struct _SCMExternalSource {
   MIDIEndpointRef source;
   CFMutableDataRef receivedMidi;
   MIDIPortRef port;
-  void *callback;
+  pthread_mutex_t mutex;
+  pthread_cond_t condition;
+
 };
 
 struct _SCMExternalDestination {
@@ -57,14 +59,15 @@ SCMExternalDestinationDispose(SCMExternalSourceRef destRef) {
 
 
 static SCMExternalSourceRef
-SCMConnectExternalSource(MIDIEndpointRef ref, void *callback) {
+SCMConnectExternalSource(MIDIEndpointRef ref) {
     OSStatus result;
   SCMExternalSourceRef sourceRef
     = CFAllocatorAllocate(NULL, sizeof(struct _SCMExternalSource), 0);
   sourceRef->receivedMidi = CFDataCreateMutable(NULL, 0);
   sourceRef->source = ref;
   sourceRef->port = nil;
-  sourceRef->callback = callback;
+  pthread_mutex_init(&sourceRef->mutex, NULL);
+  pthread_cond_init(&sourceRef->condition, NULL);
 
   result = MIDIInputPortCreate(SCMGlobalMIDIClient(),
                       CFSTR("In"),
@@ -115,26 +118,17 @@ static PyObject *
 SCMGetSourcePyObject(PyObject* self, PyObject* args) {
   MIDIEndpointRef endpoint;
   SCMExternalSourceRef sourceRef;
-  PyObject *callback;
   PyObject *pyEndpoint;
 
-  if (!PyArg_UnpackTuple(args, "OO:get_source", 2, 2, &pyEndpoint, &callback))
+  if (!PyArg_UnpackTuple(args, "O:get_source", 1, 1, &pyEndpoint))
   {
       printf("failed to parse\n");
       PyErr_SetString(PyExc_TypeError, "failed to parse arguments");
       return NULL;
   }
-  Py_XINCREF(callback);         /* Add a reference to new callback */
-
-  if (!PyCallable_Check(callback)) {
-      printf("not callable\n");
-      PyErr_SetString(PyExc_TypeError, "parameter must be callable");
-      return NULL;
-  }
   endpoint = PyCObject_AsVoidPtr(pyEndpoint);
-  sourceRef = SCMConnectExternalSource(endpoint, callback);
+  sourceRef = SCMConnectExternalSource(endpoint);
 
-  PyObject_Call(sourceRef->callback, PyTuple_New(0), PyDict_New());
   return PyCObject_FromVoidPtr(sourceRef, SCMExternalSourceDispose);
 }
 
@@ -248,15 +242,21 @@ SCMSendMidi(PyObject* self, PyObject* args) {
 }
 
 
-void
-SCMRecvMIDIPyCallback(SCMExternalSourceRef sourceRef) {
+static PyObject*
+SCMRecvMidi(PyObject* self, PyObject* args) {
   PyObject* receivedMidiT;
   UInt8* bytePtr;
   int i;
   CFIndex numBytes;
-  PyObject *arglist;
+  SCMExternalSourceRef sourceRef
+    = (SCMExternalSourceRef) PyCObject_AsVoidPtr(PyTuple_GetItem(args, 0));
 
-  numBytes = CFDataGetLength(sourceRef->receivedMidi);
+  while (true) {
+
+      numBytes = CFDataGetLength(sourceRef->receivedMidi);
+      if (numBytes > 0) break;
+      pthread_cond_wait(&sourceRef->condition, &sourceRef->mutex);
+  }
 
   receivedMidiT = PyTuple_New(numBytes);
   bytePtr = CFDataGetMutableBytePtr(sourceRef->receivedMidi);
@@ -265,13 +265,10 @@ SCMRecvMIDIPyCallback(SCMExternalSourceRef sourceRef) {
     PyTuple_SetItem(receivedMidiT, i, midiByte);
   }
 
-  arglist = Py_BuildValue("(O)", receivedMidiT);
-  PyObject_CallObject((PyObject *)sourceRef->callback, arglist);
-  Py_DECREF(arglist);
-  Py_DECREF(receivedMidiT);
   CFDataDeleteBytes(sourceRef->receivedMidi, CFRangeMake(0, numBytes));
+  pthread_mutex_unlock(&sourceRef->mutex);
+  return receivedMidiT;
 }
-
 
 void
 SCMRecvMIDIProc(const MIDIPacketList* pktList,
@@ -281,13 +278,16 @@ SCMRecvMIDIProc(const MIDIPacketList* pktList,
   int i;
   const MIDIPacket* pkt;
 
+  // TODO: timeout pthread_mutex_timedlock
+  pthread_mutex_lock(&sourceRef->mutex);
   pkt = &pktList->packet[0];
   for (i = 0; i < pktList->numPackets; i++) {
     CFDataAppendBytes(sourceRef->receivedMidi, pkt->data, pkt->length);
     pkt = MIDIPacketNext(pkt);
   }
-  SCMRecvMIDIPyCallback(sourceRef);
 
+  pthread_cond_signal(&sourceRef->condition);
+  pthread_mutex_unlock(&sourceRef->mutex);
 }
 
 
@@ -299,6 +299,7 @@ static PyMethodDef SimpleCoreMidiMethods[] = {
   {"get_midi_destination", SCMGetDestinationPyObject, METH_VARARGS, "Get a MIDI destination object."},
   {"get_midi_destination_list", SCMGetDestinationListPyObject, METH_NOARGS, "Get the available MIDI destinations."},
   {"send_midi", SCMSendMidi, METH_VARARGS, "Send midi data tuple to an external destination."},
+  {"receive_midi", SCMRecvMidi, METH_VARARGS, "Receive midi data from an external source. NOTE: this method will block until midi data is received."},
   {NULL, NULL, 0, NULL}
 };
 
