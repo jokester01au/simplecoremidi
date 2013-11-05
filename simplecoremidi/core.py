@@ -88,7 +88,7 @@ class Message(object):
       elif message_type == cls.PROGRAM_CHANGE:
         return ProgramChangeMessage().fromBytes(bytes)
       elif message_type == cls.CONTROL_CHANGE:
-        return ControlChangeMessage().fromBytes(bytes)
+        return ControllerChangeMessage().fromBytes(bytes)
       else:
         return UnknownMessage().fromBytes(bytes)
 
@@ -174,7 +174,7 @@ class ProgramChangeMessage(Message):
   def __str__(self):
       return "{}, program = {})".format(super(ProgramChangeMessage, self).__str__(), self.program)
 
-class ControlChangeMessage(Message):
+class ControllerChangeMessage(Message):
   CONTROLLERS = {
     0x00:	'Bank Select',
     0x01:	'Modulation Wheel',
@@ -247,7 +247,7 @@ class ControlChangeMessage(Message):
     }
 
   def fromBytes(self, bytes):
-      super(ControlChangeMessage, self).fromBytes(bytes)
+      super(ControllerChangeMessage, self).fromBytes(bytes)
       self.control = bytes[1]
       self.value = bytes[2]
       return self
@@ -255,16 +255,16 @@ class ControlChangeMessage(Message):
   def toBytes(self):
      if self.control == -1 or self.velocity == -1:
          raise Exception('Message is not initialised')
-     return super(ControlChangeMessage, self).toBytes() + [self.control, self.value]
+     return super(ControllerChangeMessage, self).toBytes() + [self.control, self.value]
 
   def __init__(self, channel=-1, control=-1, value=-1):
-      super(ControlChangeMessage, self).__init__(self.CONTROL_CHANGE, channel)
+      super(ControllerChangeMessage, self).__init__(self.CONTROL_CHANGE, channel)
       self.control = control
       self.value = value
 
   def __str__(self):
-      return "{}, control = {}, value = {})".format(super(ControlChangeMessage, self).__str__(),
-                               self.CONTROLLERS.get(self.control, 'Unknown Controller ({})'.format(self.control)),
+      return "{}, control = {}, value = {})".format(super(ControllerChangeMessage, self).__str__(),
+                               self.CONTROLLERS.get(self.control, 'Unknown Controller ({})'.format(hex(self.control))).,
                                self.value)
 
 # TODO: other message types
