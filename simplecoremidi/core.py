@@ -1,7 +1,5 @@
 from . import _simplecoremidi as cfuncs
-
-def callback_ext(bytes=()):
-   print("caaled ex")
+import logging
 
 class MIDISource(object):
   def __init__(self, name, source_ref):
@@ -31,6 +29,9 @@ class MIDISource(object):
         return None
     return Message.parse_message(bytes)
 
+  def __str__(self):
+      return self.name
+
 class MIDIDestination(object):
   def __init__(self, name, destination_ref):
     self.name = name
@@ -45,7 +46,7 @@ class MIDIDestination(object):
     return self.__destination
 
   def send(self, message):
-      print (str(message), message.toBytes())
+      logging.debug (message, message.toBytes())
       return cfuncs.send_midi(self._destination(), message.toBytes())
 
   @classmethod
@@ -53,6 +54,9 @@ class MIDIDestination(object):
       return [MIDIDestination( cfuncs.get_midi_endpoint_name(i), i)
            for i in cfuncs.get_midi_destination_list()
       ]
+
+  def __str__(self):
+      return self.name
 
 
 class Message(object):
@@ -93,49 +97,40 @@ class Message(object):
         return UnknownMessage().fromBytes(bytes)
 
 
-class NoteOffMessage(Message):
-  def fromBytes(self, bytes):
-      super(NoteOffMessage, self).fromBytes(bytes)
-      self.note = bytes[1]
-      self.velocity = bytes[2]
-      return self
+class NoteMessage(Message):
+    def __init__(self, type=-1, channel=-1, number=-1, velocity=-1):
+        super(NoteMessage, self).__init__(type, channel)
+        self.number = number
+        self.velocity = velocity
 
-  def toBytes(self):
-     if note == -1:
-         raise Exception('Message is not initialised')
-     return super(NoteOffMessage, self).toBytes() + [self.note, 0]
+    def __str__(self):
+        return "{}, number = {}, velocity = {})".format(super(NoteMessage, self).__str__(), self.number, self.velocity)
 
-  def __init__(self, channel=-1, note=-1):
-      super(NoteOffMessage, self).__init__(self.NOTE_OFF, channel)
-      self.note = note
-      self.velocity = 0
+    def toBytes(self):
+        if self.number == -1:
+            raise Exception('Message is not initialised')
+        return super(NoteMessage, self).toBytes() + [self.number, self.velocity]
 
-  def __str__(self):
-      return "{}, note = {})".format(super(NoteOffMessage, self).__str__(), self.note)
+    def fromBytes(self, bytes):
+        super(NoteMessage, self).fromBytes(bytes)
+        self.number = bytes[1]
+        self.velocity = bytes[2]
+        return self
+
+    def is_note_off(self):
+        return self.velocity == 0 or self.message_type == self.NOTE_OFF
+
+class NoteOffMessage(NoteMessage):
+  def __init__(self, channel=-1, number=-1, velocity=-1):
+      super(NoteOffMessage, self).__init__(self.NOTE_OFF, channel, number, velocity)
 
   def asNoteOn(self):
-      return NoteOnMessage(self.channel, self.note, 0)
+      return NoteOnMessage(self.channel, self.number, 0)
 
 
-class NoteOnMessage(Message):
-  def fromBytes(self, bytes):
-      super(NoteOnMessage, self).fromBytes(bytes)
-      self.note = bytes[1]
-      self.velocity = bytes[2]
-      return self
-
-  def toBytes(self):
-     if self.note == -1 or self.velocity == -1:
-         raise Exception('Message is not initialised')
-     return super(NoteOnMessage, self).toBytes() + [self.note, self.velocity]
-
-  def __init__(self, channel=-1, note=-1, velocity=-1):
-      super(NoteOnMessage, self).__init__(self.NOTE_ON, channel)
-      self.note = note
-      self.velocity = velocity
-
-  def __str__(self):
-      return "{}, note = {}, velocity = {})".format(super(NoteOnMessage, self).__str__(), self.note, self.velocity)
+class NoteOnMessage(NoteMessage):
+  def __init__(self, channel=-1, number=-1, velocity=-1):
+      super(NoteOnMessage, self).__init__(self.NOTE_ON, channel, number, velocity)
 
 
 class UnknownMessage(Message):
@@ -253,7 +248,7 @@ class ControllerChangeMessage(Message):
       return self
 
   def toBytes(self):
-     if self.control == -1 or self.velocity == -1:
+     if self.control == -1 or self.value == -1:
          raise Exception('Message is not initialised')
      return super(ControllerChangeMessage, self).toBytes() + [self.control, self.value]
 
@@ -264,7 +259,7 @@ class ControllerChangeMessage(Message):
 
   def __str__(self):
       return "{}, control = {}, value = {})".format(super(ControllerChangeMessage, self).__str__(),
-                               self.CONTROLLERS.get(self.control, 'Unknown Controller ({})'.format(hex(self.control))).,
-                               self.value)
+               self.CONTROLLERS.get(self.control, 'Unknown Controller ({})'.format(hex(self.control))),
+               self.value)
 
 # TODO: other message types
