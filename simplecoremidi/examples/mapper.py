@@ -4,6 +4,7 @@ from time import sleep, time as now
 import sys
 import os
 import logging
+from threading import Timer, Lock
 
 logging.basicConfig(format="%(levelname)-6s %(funcName)-20s   %(msg)s")
 logger = logging.getLogger("MIDIMapper")
@@ -27,9 +28,25 @@ class EndpointError(Exception):
     pass
 
 class MIDIMapper(object):
+    TRUE = object()
+    __pending_responses = {}
+
     def __init__(self, actions, source, destination):
         self.actions = actions
         self.find_endpoints(source, destination)
+
+    def dequeue_response(self, trigger):
+        result = self.__pending_responses.get(trigger, None)
+        if result:
+            del self.__pending_responses[trigger]
+        return result
+
+
+    def enqueue_response(self, trigger, response):
+        assert isinstance(response, Action)
+        assert isinstance(trigger, Trigger)
+        trigger.owner = self
+        self.__pending_responses[trigger] = response
 
     @classmethod
     def main(cls, actions):
@@ -57,9 +74,10 @@ class MIDIMapper(object):
 
     def run(self):
         while True:
-            message = self.source.receive()
+            message = self.source.receive(timeout=1)
             if message:
                 self.handle(message)
+            sleep(0.01) # give timer threads a chance to run
 
     def handle(self, message):
         action = None
@@ -74,19 +92,32 @@ class MIDIMapper(object):
             # if it doesn't have an associated action, pass the message through
             self.destination.send(message)
         else:
-            self.execute(action, message)
+            self._maybe_execute(action, message)
 
-    def execute(self, action, message):
-        if isinstance(action, dict):
-            for trigger, response in action.items():
-                if (trigger.matches(message)):
-                    response.update(self.destination, DEFAULT_CHANNEL,
-                                    message).execute()
-        elif isinstance(action, (set, list, tuple)):
-            for a in action:
-                a.update(self.destination, DEFAULT_CHANNEL, message).execute()
+    def _maybe_execute(self, responses, message):
+        if isinstance(responses, dict):
+             for trigger, response in responses.items():
+                matches = trigger.matches(message)
+                if matches is False:
+                    continue
+                self.enqueue_response(trigger, response)
+                if matches is True:
+                    self.execute(trigger, message)
+        elif isinstance(responses, (set, list, tuple)):
+            for r in responses:
+                self.enqueue_response(self.TRUE, r)
+                self.execute(self.TRUE, message)
         else:
-            action.update(self.destination, DEFAULT_CHANNEL, message).execute()
+            self.enqueue_response(self.TRUE, responses)
+            self.execute(self.TRUE, message)
+
+    def execute(self, trigger, message):
+        with Lock():
+            response = self.dequeue_response(trigger)
+            if response:
+                response.update(self.destination, DEFAULT_CHANNEL, message).execute()
+            else:
+                logger.error("%s has no queued response" % trigger)
 
     @classmethod
     def argparse(cls):
@@ -129,30 +160,6 @@ class Trigger(object):
     LONG_PRESS_ATTR = '__is_longpress__'
 
     __notes_down = {}
-
-    def __init__(self, greaterthan=False, lessthan=False, **kwargs):
-        self.greater = greaterthan
-        self.lessthan = lessthan
-        self.conditions = kwargs
-
-    def condition_matches(self, actual, value):
-        if self.greater:
-            return  actual > value
-        elif self.lessthan:
-            return actual < value
-        else:
-            return actual == value
-
-    def matches(self, message):
-        for attr, value in self.conditions.items():
-            actual = getattr(message, attr, None)
-            if actual is None:
-                logger.debug("%s has no %s" % (typename(message), attr))
-                return False
-            if actual != value:
-                logger.debug("%s.%s=%s (expected %s)" % (typename(message), attr, actual, value))
-                return False
-        return True
 
     def _maybe_set_longpress_attr(self, message):
         """
@@ -204,18 +211,12 @@ class Trigger(object):
 class LongPress(Trigger):
 
     def matches(self, message):
-        if not super(LongPress, self).matches(message):
-            return False
-
         self._maybe_set_longpress_attr(message)
         return getattr(message, self.LONG_PRESS_ATTR, None) is True
 
 
 class Tap(Trigger):
     def matches(self, message):
-        if not super(Tap, self).matches(message):
-            return False
-
         self._maybe_set_longpress_attr(message)
         return getattr(message, self.LONG_PRESS_ATTR, None) is False
 
@@ -246,7 +247,7 @@ class MIDIAction(Action):
     def __init__(self, port, channel):
         self.update(port, channel, message=None)
 
-    def update(self, port, channel, message):
+    def update(self, port, channel, message, **kwargs):
         self.port = port
         self.channel = channel
         self.message = message
@@ -280,7 +281,8 @@ class Note(MIDIAction):
         logger.debug("note %d tapped for %d seconds" % (self.number, self.duration))
 
     def execute(self):
-        if not self.message.is_note_off():
+        is_note_off = getattr(self.message, 'is_note_off', None)
+        if is_note_off and not is_note_off():
             return
 
         if self.toggle:
@@ -331,9 +333,58 @@ class Controller(MIDIAction):
         return self.control == other.control
 
 
-class Through(Action):
-    def __init__(self):
+class Send(MIDIAction):
+    def __init__(self, **kwargs):
         self.message = None
+        self.kwargs = kwargs
 
     def execute(self):
-        return self.message
+        for attr, value in self.kwargs.items():
+            setattr(self.message, attr, value)
+        self.port.send(self.message)
+
+
+class Change(Trigger):
+    __last_value = {}
+
+    def __init__(self, attribute='value'):
+        self.attribute = attribute
+
+    def matches(self, message):
+        last_value = self.__last_value.get(message, None)
+        this_value = getattr(message, self.attribute, None)
+
+        self.__last_value[message] = this_value
+        return last_value != this_value
+
+
+class Compare(Trigger):
+    def __init__(self, predicate, duration=0):
+        self.predicate = predicate
+        self.duration = duration
+        self.owner = None
+
+        self.timer = None
+
+    def fire(self, *args, **kwargs):
+        #_self = args[0]
+        _message = args[1]
+        logger.debug("%s firing trigger" % self)
+        self.timer = None
+        self.owner.execute(self, _message)
+
+    def matches(self, message):
+        result = self.predicate (message)
+        if result:
+            if self.duration > 0:
+                if not self.timer or not self.timer.is_alive():
+                    logger.debug("%s initiated a deferred trigger" % self)
+                    self.timer = Timer(self.duration, self.fire, args=(self, message))
+                    self.timer.start()
+                result = None  # we havent matched yet
+        else:
+            #logger.debug("%s became false before the duration expired" % self)
+            if self.timer:
+                self.timer.cancel()
+
+        return result
