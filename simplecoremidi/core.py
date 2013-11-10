@@ -46,7 +46,7 @@ class MIDIDestination(object):
     return self.__destination
 
   def send(self, message):
-      logging.debug (message, message.toBytes())
+      logging.debug (message, map(hex,message.toBytes()))
       return cfuncs.send_midi(self._destination(), message.toBytes())
 
   @classmethod
@@ -183,12 +183,12 @@ class ControllerChangeMessage(Message):
     0x09:	'Undefined',
     0x0A:	'Pan',
     0x0B:	'0Ch',
-    0x0C:	'LSB of Effect Control 1',
-    0x0D:	'LSB of Effect Control 2',
-    0x10: 'LSB of General Purpose Controller 1',
-    0x11: 'LSB of General Purpose Controller 2',
-    0x12: 'LSB of General Purpose Controller 3',
-    0x13: 'LSB of General Purpose Controller 4',
+    0x0C:	'Effect Control 1',
+    0x0D:	'Effect Control 2',
+    0x10:   'General Purpose Controller 1',
+    0x11:   'General Purpose Controller 2',
+    0x12:   'General Purpose Controller 3',
+    0x13:   'General Purpose Controller 4',
     0x20:	'LSB of Bank Select',
     0x21:	'LSB of Modulation Wheel',
     0x22:	'LSB of Breath Contoller',
