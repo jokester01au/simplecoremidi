@@ -142,7 +142,7 @@ class UnknownMessage(Message):
   def toBytes(self):
      if not self.bytes:
          raise Exception('Message is not initialised')
-     return super(UnknownMessage, self).toBytes() + bytes
+     return super(UnknownMessage, self).toBytes()
 
   def __init__(self, type=-1, channel=-1, bytes=[]):
       super(UnknownMessage, self).__init__(type, channel)
